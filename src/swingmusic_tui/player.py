@@ -52,27 +52,31 @@ class _AuthStreamProxy:
                     self.end_headers()
                     return
 
-                upstream_url = proxy.api.stream_url(track, proxy.quality)
                 headers = proxy.api.auth_headers()
                 if "Range" in self.headers:
                     headers["Range"] = self.headers["Range"]
 
+                urls = proxy.api.stream_urls(track, proxy.quality)
                 try:
                     with httpx.Client(timeout=None, follow_redirects=True) as client:
-                        with client.stream("GET", upstream_url, headers=headers) as resp:
-                            self.send_response(resp.status_code)
-                            for h in ("Content-Type", "Content-Length", "Content-Range", "Accept-Ranges"):
-                                if h in resp.headers:
-                                    self.send_header(h, resp.headers[h])
-                            self.send_header("Connection", "close")
-                            self.end_headers()
-                            for chunk in resp.iter_bytes(chunk_size=65536):
-                                if not chunk:
+                        for i, upstream_url in enumerate(urls):
+                            with client.stream("GET", upstream_url, headers=headers) as resp:
+                                if resp.status_code == 404 and i + 1 < len(urls):
                                     continue
-                                try:
-                                    self.wfile.write(chunk)
-                                except (BrokenPipeError, ConnectionResetError):
-                                    break
+                                self.send_response(resp.status_code)
+                                for h in ("Content-Type", "Content-Length", "Content-Range", "Accept-Ranges"):
+                                    if h in resp.headers:
+                                        self.send_header(h, resp.headers[h])
+                                self.send_header("Connection", "close")
+                                self.end_headers()
+                                for chunk in resp.iter_bytes(chunk_size=65536):
+                                    if not chunk:
+                                        continue
+                                    try:
+                                        self.wfile.write(chunk)
+                                    except (BrokenPipeError, ConnectionResetError):
+                                        break
+                                return
                 except Exception:
                     try:
                         self.send_response(502)
@@ -136,10 +140,13 @@ class AudioPlayer:
         self._proxy = _AuthStreamProxy(api, quality=quality)
         self._proc: subprocess.Popen | None = None
         self._sock_path: str = ""
+        self._vlc_port: int = 0
         self._backend: str = self._detect_backend()
         self._stop_monitor = threading.Event()
         self._lock = threading.RLock()
         self._playback_gen: int = 0
+        self._consec_failures: int = 0
+        self._started_at: float = 0.0
         self._monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
         self._monitor_thread.start()
 
@@ -240,17 +247,20 @@ class AudioPlayer:
             ]
         elif self._backend == "cvlc":
             vlc_vol = int(round(self.volume * 2.56))
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(("127.0.0.1", 0))
+                self._vlc_port = s.getsockname()[1]
             cmd = [
                 "cvlc",
                 "--no-video",
                 "--play-and-exit",
                 "--quiet",
-                "--intf",
+                "-I",
+                "dummy",
+                "--extraintf",
                 "rc",
-                "--rc-unix",
-                self._sock_path,
-                "--gain",
-                "1.0",
+                "--rc-host",
+                f"127.0.0.1:{self._vlc_port}",
                 stream_url,
             ]
             self._pending_vlc_vol = vlc_vol
@@ -296,14 +306,21 @@ class AudioPlayer:
         return None
 
     def _vlc_cmd(self, command: str) -> str:
-        if not self._sock_path or not os.path.exists(self._sock_path):
+        if not self._vlc_port:
             return ""
         try:
-            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.settimeout(0.35)
-                s.connect(self._sock_path)
+                s.connect(("127.0.0.1", self._vlc_port))
+                # Drain greeting banner if present
+                s.settimeout(0.05)
+                try:
+                    s.recv(1024)
+                except socket.timeout:
+                    pass
+                s.settimeout(0.35)
                 s.sendall((command + "\n").encode("utf-8"))
-                time.sleep(0.03)
+                time.sleep(0.04)
                 try:
                     return s.recv(2048).decode("utf-8", errors="ignore")
                 except socket.timeout:
@@ -440,11 +457,24 @@ class AudioPlayer:
                     continue
 
                 if proc.poll() is not None:
-                    # Track finished naturally
+                    # Track finished or failed
                     self._proc = None
+                    elapsed = time.monotonic() - self._started_at
+                    if elapsed < 1.5:
+                        self._consec_failures += 1
+                    else:
+                        self._consec_failures = 0
                     if self.is_playing and not self.is_paused:
-                        self.next_track()
+                        if self._consec_failures >= 3:
+                            self.is_playing = False
+                            self.is_paused = False
+                            self._consec_failures = 0
+                            self._notify()
+                        else:
+                            self.next_track()
                     continue
+                elif time.monotonic() - self._started_at >= 2.0:
+                    self._consec_failures = 0
 
                 if self._backend == "mpv":
                     pos_res = self._mpv_cmd(["get_property", "time-pos"])
@@ -454,19 +484,19 @@ class AudioPlayer:
                     if dur_res and isinstance(dur_res.get("data"), (int, float)):
                         self.duration = float(dur_res["data"])
                 elif self._backend == "cvlc":
-                    if getattr(self, "_pending_vlc_vol", None) is not None and os.path.exists(self._sock_path):
-                        self._vlc_cmd(f"volume {self._pending_vlc_vol}")
-                        self._pending_vlc_vol = None
+                    if getattr(self, "_pending_vlc_vol", None) is not None and self._vlc_port:
+                        if self._vlc_cmd(f"volume {self._pending_vlc_vol}") or True:
+                            self._pending_vlc_vol = None
                     out = self._vlc_cmd("get_time")
                     for line in out.splitlines():
-                        line = line.strip()
+                        line = line.lstrip("> ").strip()
                         if line.isdigit():
                             self.position = float(int(line))
                             break
                     if self.duration <= 0:
                         dout = self._vlc_cmd("get_length")
                         for line in dout.splitlines():
-                            line = line.strip()
+                            line = line.lstrip("> ").strip()
                             if line.isdigit() and int(line) > 0:
                                 self.duration = float(int(line))
                                 break

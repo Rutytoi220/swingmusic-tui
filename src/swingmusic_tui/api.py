@@ -410,6 +410,14 @@ class SwingMusicAPI:
         data = r.json()
         return [Track.from_dict(t) for t in (data.get("results") or [])]
 
-    def stream_url(self, track: Track, quality: str = "original") -> str:
+    def stream_url(self, track: Track, quality: str = "original", legacy: bool = True) -> str:
         fp = quote(track.filepath, safe="")
+        if legacy:
+            return self._url(f"/file/{track.trackhash}/legacy?filepath={fp}")
         return self._url(f"/file/{track.trackhash}?filepath={fp}&quality={quality}")
+
+    def stream_urls(self, track: Track, quality: str = "original") -> list[str]:
+        return [
+            self.stream_url(track, quality=quality, legacy=True),
+            self.stream_url(track, quality=quality, legacy=False),
+        ]
