@@ -21,7 +21,7 @@ uv tool install .
 
 ### Run directly
 ```bash
-swingmusic-tui
+sw-tui
 ```
 
 On first launch, a login modal prompts for your Swing Music server URL (e.g. `http://100.100.33.5:1970`), username, and password. Credentials/tokens are stored locally in `~/.config/swingmusic-tui/config.json` (`0600`).

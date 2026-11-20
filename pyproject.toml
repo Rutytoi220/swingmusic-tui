@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.scripts]
-swingmusic-tui = "swingmusic_tui.app:run"
+sw-tui = "swingmusic_tui.app:run"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/swingmusic_tui"]
