@@ -289,25 +289,20 @@ class SwingMusicApp(App):
     TITLE = "Swing Music"
     CSS = """
     Screen {
-        background: #101116;
+        background: ansi_default;
         color: #eef0f7;
     }
 
     #body {
         height: 1fr;
+        background: transparent;
     }
 
     #sidebar {
         width: 22;
-        background: #14161f;
-        border-right: solid #242736;
+        background: transparent;
+        border-right: solid #2a2d3d;
         padding: 1 0;
-    }
-
-    #brand {
-        padding: 0 2 1 2;
-        color: #8c52ff;
-        text-style: bold;
     }
 
     #nav-list {
@@ -325,7 +320,7 @@ class SwingMusicApp(App):
     }
 
     #nav-list > ListItem.--highlight {
-        background: #1f2335;
+        background: #252942;
         color: #eef0f7;
         text-style: bold;
     }
@@ -340,17 +335,18 @@ class SwingMusicApp(App):
         padding: 1 2 0 2;
         color: #6c7390;
         height: auto;
+        background: transparent;
     }
 
     #main-pane {
         width: 1fr;
-        background: #101116;
+        background: transparent;
     }
 
     #top-bar {
         height: 3;
-        background: #14161f;
-        border-bottom: solid #242736;
+        background: transparent;
+        border-bottom: solid #2a2d3d;
         padding: 0 2;
         align-vertical: middle;
     }
@@ -360,13 +356,15 @@ class SwingMusicApp(App):
         color: #eef0f7;
         text-style: bold;
         content-align: left middle;
+        background: transparent;
     }
 
     #sort-badge {
         width: auto;
         color: #b197fc;
-        background: #1f1b33;
-        padding: 0 2;
+        background: transparent;
+        border: round #3b3066;
+        padding: 0 1;
         content-align: right middle;
     }
 
@@ -374,7 +372,7 @@ class SwingMusicApp(App):
         display: none;
         height: 3;
         margin: 0 1;
-        background: #161822;
+        background: transparent;
         border: round #5c7cfa;
     }
 
@@ -384,13 +382,13 @@ class SwingMusicApp(App):
 
     #content-table {
         height: 1fr;
-        background: #101116;
+        background: transparent;
         border: none;
         padding: 0 1;
     }
 
     #content-table > .datatable--header {
-        background: #14161f;
+        background: transparent;
         color: #858ba3;
         text-style: bold;
     }
@@ -410,14 +408,14 @@ class SwingMusicApp(App):
     #status-line {
         height: 1;
         padding: 0 2;
-        background: #101116;
+        background: transparent;
         color: #7c829d;
     }
 
     #player-bar {
         height: 4;
-        background: #14161f;
-        border-top: solid #242736;
+        background: transparent;
+        border-top: solid #2a2d3d;
         padding: 0 2;
         align-vertical: middle;
     }
@@ -426,12 +424,14 @@ class SwingMusicApp(App):
         width: 1fr;
         height: 3;
         content-align: left middle;
+        background: transparent;
     }
 
     #now-playing-center {
         width: 44;
         height: 3;
         content-align: center middle;
+        background: transparent;
     }
 
     #now-playing-right {
@@ -439,6 +439,7 @@ class SwingMusicApp(App):
         height: 3;
         content-align: right middle;
         color: #9aa0b8;
+        background: transparent;
     }
     """
 
@@ -471,7 +472,7 @@ class SwingMusicApp(App):
     ]
 
     def __init__(self) -> None:
-        super().__init__()
+        super().__init__(ansi_color=True)
         self.cfg = AppConfig.load()
         self.api = SwingMusicAPI(self.cfg.server_url, self.cfg.access_token)
         self.player = AudioPlayer(
@@ -495,7 +496,6 @@ class SwingMusicApp(App):
     def compose(self) -> ComposeResult:
         with Horizontal(id="body"):
             with Vertical(id="sidebar"):
-                yield Static("♫ SWING MUSIC", id="brand")
                 yield ListView(
                     *[ListItem(Label(label), id=f"nav-{key}") for key, label in NAV_ITEMS],
                     id="nav-list",
