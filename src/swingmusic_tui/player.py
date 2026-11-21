@@ -12,11 +12,13 @@ import subprocess
 import tempfile
 import threading
 import time
+from dataclasses import asdict
 from typing import Callable
 
 import httpx
 
 from .api import SwingMusicAPI, Track
+from .config import load_session, save_session
 
 
 class _AuthStreamProxy:
@@ -147,6 +149,8 @@ class AudioPlayer:
         self._playback_gen: int = 0
         self._consec_failures: int = 0
         self._started_at: float = 0.0
+        self._pending_seek: float = 0.0
+        self._last_session_save: float = 0.0
         self._monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
         self._monitor_thread.start()
 
@@ -177,13 +181,71 @@ class AudioPlayer:
             except Exception:
                 pass
 
+    def persist_session(self) -> None:
+        with self._lock:
+            if not self.queue or self.index < 0:
+                return
+            try:
+                save_session([asdict(t) for t in self.queue], self.index, self.position)
+                self._last_session_save = time.monotonic()
+            except Exception:
+                pass
+
+    def restore_saved_session(self) -> bool:
+        data = load_session()
+        if not data:
+            return False
+        raw_q = data.get("queue") or []
+        if not raw_q:
+            return False
+        tracks: list[Track] = []
+        for item in raw_q:
+            if isinstance(item, dict) and item.get("trackhash"):
+                tracks.append(
+                    Track(
+                        trackhash=str(item.get("trackhash", "")),
+                        title=str(item.get("title", "Untitled")),
+                        filepath=str(item.get("filepath", "")),
+                        artists=str(item.get("artists", "Unknown Artist")),
+                        album=str(item.get("album", "")),
+                        albumhash=str(item.get("albumhash", "")),
+                        duration=int(item.get("duration") or 0),
+                        track_num=int(item.get("track_num") or 0),
+                        disc=int(item.get("disc") or 1),
+                        bitrate=int(item.get("bitrate") or 0),
+                        is_favorite=bool(item.get("is_favorite", False)),
+                        last_mod=float(item.get("last_mod") or 0.0),
+                        date=int(item.get("date") or 0),
+                        image=str(item.get("image", "")),
+                    )
+                )
+        if not tracks:
+            return False
+        idx = max(0, min(int(data.get("index") or 0), len(tracks) - 1))
+        pos = max(0.0, float(data.get("position") or 0.0))
+        with self._lock:
+            self.queue = tracks
+            self.index = idx
+            self.current_track = tracks[idx]
+            self.duration = float(tracks[idx].duration or 0)
+            if self.duration > 0:
+                pos = min(pos, max(0.0, self.duration - 1.0))
+            self.position = pos
+            self._pending_seek = pos
+            self.is_playing = False
+            self.is_paused = True
+        self._notify()
+        return True
+
     def play_tracks(self, tracks: list[Track], start_index: int = 0) -> None:
         with self._lock:
             if not tracks:
                 return
             self.queue = list(tracks)
             self.index = max(0, min(start_index, len(self.queue) - 1))
+            self._pending_seek = 0.0
             self._start_current()
+            self.persist_session()
 
     def enqueue(self, track: Track) -> None:
         with self._lock:
@@ -212,7 +274,7 @@ class AudioPlayer:
                 pass
             self._sock_path = ""
 
-    def _start_current(self) -> None:
+    def _start_current(self, start_pos: float = 0.0) -> None:
         self._kill_proc()
         if not (0 <= self.index < len(self.queue)):
             self.current_track = None
@@ -225,11 +287,12 @@ class AudioPlayer:
 
         track = self.queue[self.index]
         self.current_track = track
-        self.position = 0.0
+        self.position = max(0.0, float(start_pos))
         self.duration = float(track.duration or 0)
         self.is_playing = True
         self.is_paused = False
         self._playback_gen += 1
+        self._pending_seek = 0.0
 
         stream_url = self._proxy.register(track)
         tmp_dir = tempfile.gettempdir()
@@ -243,8 +306,10 @@ class AudioPlayer:
                 "--really-quiet",
                 f"--volume={self.volume}",
                 f"--input-ipc-server={self._sock_path}",
-                stream_url,
             ]
+            if start_pos > 0.5:
+                cmd.append(f"--start={start_pos:.1f}")
+            cmd.append(stream_url)
         elif self._backend == "cvlc":
             vlc_vol = int(round(self.volume * 2.56))
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -261,8 +326,10 @@ class AudioPlayer:
                 "rc",
                 "--rc-host",
                 f"127.0.0.1:{self._vlc_port}",
-                stream_url,
             ]
+            if start_pos > 0.5:
+                cmd.append(f"--start-time={int(start_pos)}")
+            cmd.append(stream_url)
             self._pending_vlc_vol = vlc_vol
         elif self._backend == "ffplay":
             cmd = [
@@ -273,8 +340,10 @@ class AudioPlayer:
                 "quiet",
                 "-volume",
                 str(self.volume),
-                stream_url,
             ]
+            if start_pos > 0.5:
+                cmd.extend(["-ss", f"{start_pos:.1f}"])
+            cmd.append(stream_url)
         else:
             self.is_playing = False
             self._notify()
@@ -335,6 +404,11 @@ class AudioPlayer:
                     self.index = max(0, self.index)
                     self._start_current()
                 return
+            if self._proc is None:
+                # Resuming a restored session track from its saved timestamp!
+                self._start_current(start_pos=self._pending_seek or self.position)
+                self.persist_session()
+                return
             if self._backend == "mpv":
                 self._mpv_cmd(["cycle", "pause"])
                 self.is_paused = not self.is_paused
@@ -350,7 +424,8 @@ class AudioPlayer:
                     self.is_playing = False
                     self.is_paused = True
                 else:
-                    self._start_current()
+                    self._start_current(start_pos=self.position)
+            self.persist_session()
             self._notify()
 
     def play(self) -> None:
@@ -503,8 +578,13 @@ class AudioPlayer:
                 elif self._backend == "ffplay" and self.is_playing and not self.is_paused:
                     self.position += 0.5
 
+                # Periodically save session every 3s while playing so closing the window preserves timestamp
+                if self.is_playing and not self.is_paused and (time.monotonic() - self._last_session_save >= 3.0):
+                    self.persist_session()
+
     def shutdown(self) -> None:
         self._stop_monitor.set()
+        self.persist_session()
         with self._lock:
             self._kill_proc()
         self._proxy.stop()

@@ -518,6 +518,7 @@ class SwingMusicApp(App):
         table = self.query_one("#content-table", DataTable)
         table.zebra_stripes = False
         table.focus()
+        self.player.restore_saved_session()
         self.set_interval(0.5, self._refresh_player_bar)
         self._refresh_player_bar()
 

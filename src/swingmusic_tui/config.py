@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
 CONFIG_DIR = Path.home() / ".config" / "swingmusic-tui"
 CONFIG_FILE = CONFIG_DIR / "config.json"
+SESSION_FILE = CONFIG_DIR / "session.json"
 
 
 @dataclass
@@ -40,3 +43,26 @@ class AppConfig:
             CONFIG_FILE.chmod(0o600)
         except OSError:
             pass
+
+
+def save_session(queue_dicts: list[dict[str, Any]], index: int, position: float) -> None:
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "queue": queue_dicts,
+        "index": index,
+        "position": max(0.0, float(position)),
+    }
+    tmp = SESSION_FILE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    os.replace(tmp, SESSION_FILE)
+
+
+def load_session() -> dict[str, Any] | None:
+    try:
+        if SESSION_FILE.exists():
+            data = json.loads(SESSION_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and isinstance(data.get("queue"), list):
+                return data
+    except Exception:
+        pass
+    return None
