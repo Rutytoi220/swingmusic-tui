@@ -177,9 +177,15 @@ def sort_tracks(tracks: list[Track], mode: str) -> list[Track]:
     """Client-side sorting supporting oldest/newest, A-Z, Z-A, artist, album, duration."""
     if mode == "default":
         return list(tracks)
+    has_timestamps = any(t.last_mod or t.date for t in tracks)
     if mode == "newest":
+        if not has_timestamps:
+            # Endpoints like /favorites/tracks & /nothome/recents/added already return Newest -> Oldest
+            return list(tracks)
         return sorted(tracks, key=lambda t: (t.last_mod, t.date, t.title.lower()), reverse=True)
     if mode == "oldest":
+        if not has_timestamps:
+            return list(reversed(tracks))
         return sorted(tracks, key=lambda t: (t.last_mod, t.date, t.title.lower()))
     if mode == "title_asc":
         return sorted(tracks, key=lambda t: t.title.lower())
