@@ -445,6 +445,7 @@ class SwingMusicApp(App):
 
     BINDINGS = [
         Binding("q", "quit_app", "Quit", show=False),
+        Binding("ctrl+c", "quit_app", "Quit", show=False, priority=True),
         Binding("question_mark", "show_help", "Help", show=False),
         Binding("s", "open_sort", "Sort", show=False),
         Binding("S", "flip_sort", "Reverse Sort", show=False),
