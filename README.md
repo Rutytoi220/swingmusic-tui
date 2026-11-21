@@ -32,9 +32,10 @@ On first launch, a login modal prompts for your Swing Music server URL (e.g. `ht
 | --- | --- |
 | `j` / `k` | Move cursor down / up |
 | `g` / `G` | Jump to top / bottom |
-| `h` / `l` | Go back / focus sidebar · Open folder/album/playlist or play track |
+| `h` / `l` | Go back / focus sidebar · Open album/artist/playlist or play track |
+| `Tab` | Toggle focus between Sidebar and Track list |
 | `Enter` | Open item or play selected track |
-| `1` – `7` | Jump to Home, Folders, Albums, Artists, Playlists, Favorites, Queue |
+| `1` – `6` | Jump to Home, Favorites, Albums, Artists, Playlists, Queue |
 | `s` | Open Sort Picker (Newest, Oldest, A–Z, Z–A, Artist, Album, Duration) |
 | `S` | Flip sort direction (Newest ↔ Oldest, A–Z ↔ Z–A) |
 | `/` | Search tracks on server |

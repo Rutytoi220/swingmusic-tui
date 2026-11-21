@@ -49,11 +49,10 @@ def make_progress_bar(pos: float, dur: float, width: int = 28) -> str:
 
 NAV_ITEMS: list[tuple[str, str]] = [
     ("home", "⌂  Home"),
-    ("folders", "▤  Folders"),
+    ("favorites", "♥  Favorites"),
     ("albums", "◎  Albums"),
     ("artists", "♪  Artists"),
     ("playlists", "☰  Playlists"),
-    ("favorites", "♥  Favorites"),
     ("queue", "≡  Queue"),
 ]
 
@@ -253,9 +252,10 @@ class HelpModal(ModalScreen[None]):
         "[b]Navigation (HJKL)[/]\n"
         "  j / k         Move cursor down / up\n"
         "  g / G         Jump to top / bottom\n"
-        "  h / l         Focus sidebar / Enter item (or go back)\n"
-        "  Enter         Open folder/album/playlist or Play track\n"
-        "  1 – 7         Jump directly to Home/Folders/Albums/Artists/Playlists/Favs/Queue\n\n"
+        "  h / l         Focus sidebar / Open item (or go back)\n"
+        "  Tab           Toggle focus between Sidebar and Track list\n"
+        "  Enter         Open album/artist/playlist or Play track\n"
+        "  1 – 6         Jump directly to Home/Favorites/Albums/Artists/Playlists/Queue\n\n"
         "[b]Sorting & Search[/]\n"
         "  s             Open Sort Picker (Newest, Oldest, A-Z, Z-A, Artist, Album, Duration)\n"
         "  S             Flip sort direction (Newest ↔ Oldest, A-Z ↔ Z-A)\n"
@@ -462,12 +462,12 @@ class SwingMusicApp(App):
         Binding("f", "favorite_selected", "Favorite", show=False),
         Binding("L", "open_login", "Login", show=False),
         Binding("1", "nav_1", "Home", show=False),
-        Binding("2", "nav_2", "Folders", show=False),
+        Binding("2", "nav_2", "Favorites", show=False),
         Binding("3", "nav_3", "Albums", show=False),
         Binding("4", "nav_4", "Artists", show=False),
         Binding("5", "nav_5", "Playlists", show=False),
-        Binding("6", "nav_6", "Favorites", show=False),
-        Binding("7", "nav_7", "Queue", show=False),
+        Binding("6", "nav_6", "Queue", show=False),
+        Binding("tab", "toggle_sidebar", "Switch Pane", show=False),
     ]
 
     def __init__(self) -> None:
@@ -484,7 +484,7 @@ class SwingMusicApp(App):
         )
         self.mpris = MPRISService(self.player)
 
-        self.current_view: str = "folders"
+        self.current_view: str = "favorites"
         self.current_folder_path: str = "$home"
         self.folder_stack: list[str] = []
         self.subview_stack: list[tuple[str, str]] = []  # e.g. [("album", hash)]
@@ -503,7 +503,7 @@ class SwingMusicApp(App):
                 yield Static("Not connected", id="server-badge")
             with Vertical(id="main-pane"):
                 with Horizontal(id="top-bar"):
-                    yield Static("Folders", id="view-title")
+                    yield Static("♥ Favorites", id="view-title")
                     yield Static(f"⇅ {SORT_LABELS.get(self.cfg.sort_mode, 'Newest → Oldest')}  [s]", id="sort-badge")
                 yield Input(placeholder="Search tracks on Swing Music... (Enter to search, Esc to cancel)", id="search-bar")
                 yield DataTable(id="content-table", cursor_type="row")
@@ -621,7 +621,7 @@ class SwingMusicApp(App):
         self._select_nav("home")
 
     def action_nav_2(self) -> None:
-        self._select_nav("folders")
+        self._select_nav("favorites")
 
     def action_nav_3(self) -> None:
         self._select_nav("albums")
@@ -633,10 +633,15 @@ class SwingMusicApp(App):
         self._select_nav("playlists")
 
     def action_nav_6(self) -> None:
-        self._select_nav("favorites")
-
-    def action_nav_7(self) -> None:
         self._select_nav("queue")
+
+    def action_toggle_sidebar(self) -> None:
+        nav = self.query_one("#nav-list", ListView)
+        table = self.query_one("#content-table", DataTable)
+        if nav.has_focus:
+            table.focus()
+        else:
+            nav.focus()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         if event.list_view.id == "nav-list" and event.item.id and event.item.id.startswith("nav-"):
