@@ -12,12 +12,20 @@ A sleek, keyboard-first terminal client for **[Swing Music](https://github.com/s
 
 ## Installation
 
-### Using `uv` (recommended)
+### One-line install (Linux / macOS)
 ```bash
-git clone https://github.com/Rutytoi220/swingmusic-tui.git
-cd swingmusic-tui
-uv tool install .
+curl -fsSL https://raw.githubusercontent.com/Rutytoi220/swingmusic-tui/main/install.sh | bash
 ```
+
+### Using `uv` or `pipx` directly from GitHub
+```bash
+uv tool install git+https://github.com/Rutytoi220/swingmusic-tui
+# or
+pipx install git+https://github.com/Rutytoi220/swingmusic-tui
+```
+
+### Pre-built wheel / tarball
+Download from **[GitHub Releases](https://github.com/Rutytoi220/swingmusic-tui/releases)**.
 
 ### Run directly
 ```bash
