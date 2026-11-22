@@ -1,67 +1,45 @@
 # swingmusic-tui
 
-A sleek, keyboard-first terminal client for **[Swing Music](https://github.com/swingmx/swingmusic)**, inspired by the Swing Music web UI with full Vim (`HJKL`) navigation, rich sorting, and native Linux **MPRIS2** (`playerctl`) integration.
+A terminal client for [Swing Music](https://github.com/swingmx/swingmusic) (`sw-tui`).
 
-## Features
+Vim-style navigation (`hjkl`), plays audio straight from your server using `mpv` / `vlc` / `ffplay`, and works with `playerctl` / MPRIS2 media keys on Linux.
 
-- **Swing Music Web UI-inspired layout** — Left sidebar navigation, main track/folder browser with active sort pill, and persistent bottom Now Playing bar.
-- **100% Keyboard-First (`HJKL`)** — Navigate folders, albums, artists, playlists, favorites, search, and queue without touching the mouse.
-- **Flexible Sorting (`s` / `S`)** — Sort by **Newest → Oldest**, **Oldest → Newest**, **Title A → Z**, **Title Z → A**, **Artist A → Z**, **Album A → Z**, **Duration ↑/↓**, or **Default / Track #**.
-- **Native MPRIS2 (`org.mpris.MediaPlayer2.swingmusic_tui`)** — Works out of the box with `playerctl`, Waybar, Hyprland media keys, and priority managers without fighting your browser tabs.
-- **Zero-friction audio streaming** — Streams directly from your Swing Music server through a local authenticated proxy using `mpv`, `cvlc` (VLC), or `ffplay`.
+## Install
 
-## Installation
-
-### One-line install (Linux / macOS)
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Rutytoi220/swingmusic-tui/main/install.sh | bash
 ```
 
-### Using `uv` or `pipx` directly from GitHub
+Or with `uv` / `pipx`:
+
 ```bash
 uv tool install git+https://github.com/Rutytoi220/swingmusic-tui
-# or
-pipx install git+https://github.com/Rutytoi220/swingmusic-tui
 ```
 
-### Pre-built wheel / tarball
-Download from **[GitHub Releases](https://github.com/Rutytoi220/swingmusic-tui/releases)**.
+You'll need Python 3.11+ and `mpv` (or `vlc` / `ffmpeg`) installed.
 
-### Run directly
+## Usage
+
 ```bash
 sw-tui
 ```
 
-On first launch, a login modal prompts for your Swing Music server URL (e.g. `http://100.100.33.5:1970`), username, and password. Credentials/tokens are stored locally in `~/.config/swingmusic-tui/config.json` (`0600`).
+First time you open it, just put in your Swing Music URL, username, and password. Config is saved in `~/.config/swingmusic-tui/config.json`.
 
-## Keybindings
+### Main keys
 
-| Key | Action |
-| --- | --- |
-| `j` / `k` | Move cursor down / up |
-| `g` / `G` | Jump to top / bottom |
-| `h` / `l` | Go back / focus sidebar · Open album/artist/playlist or play track |
-| `Tab` | Toggle focus between Sidebar and Track list |
-| `Enter` | Open item or play selected track |
-| `1` – `6` | Jump to Home, Favorites, Albums, Artists, Playlists, Queue |
-| `s` | Open Sort Picker (Newest, Oldest, A–Z, Z–A, Artist, Album, Duration) |
-| `S` | Flip sort direction (Newest ↔ Oldest, A–Z ↔ Z–A) |
-| `/` | Search tracks on server |
-| `Space` | Play / Pause |
-| `n` / `p` | Next / Previous track |
-| `[` / `]` | Seek `-10s` / `+10s` |
-| `-` / `+` | Volume `-5%` / `+5%` |
-| `a` | Add selected track to queue |
-| `f` | Toggle Favorite (`♥`) |
-| `z` / `r` | Toggle Shuffle / Cycle Repeat (`off` → `all` → `one`) |
-| `L` | Open Server Login / Settings |
-| `?` | Show keybinding help |
-| `q` | Quit |
-
-## Requirements
-
-- Python 3.11+
-- One audio backend installed: `mpv` (recommended), `vlc` (`cvlc`), or `ffmpeg` (`ffplay`)
+- `j` / `k` — move down / up (`g` / `G` for top / bottom)
+- `h` / `l` or `Enter` — go back / open or play
+- `1`–`6` — Home, Favorites, Albums, Artists, Playlists, Queue
+- `/` — search whatever tab you're in
+- `s` / `S` — sort / reverse sort
+- `Space` — play / pause
+- `n` / `p` — next / previous track
+- `[` / `]` — seek -10s / +10s
+- `-` / `+` — volume
+- `z` / `r` — shuffle / repeat
+- `a` / `f` — add to queue / favorite
+- `?` — help, `q` — quit
 
 ## License
 
