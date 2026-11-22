@@ -327,8 +327,8 @@ class SwingMusicAPI:
                 return tracks
         except Exception:
             pass
-        # Fallback to random tracks if recents only returned albums
-        return self.get_random_tracks(limit)
+        # Fallback to $home folder tracks sorted by newest last_mod
+        return self.get_folder("$home", sort_mode="newest", limit=limit).tracks
 
     def get_recently_played(self, limit: int = 80) -> list[Track]:
         r = self._client.get(self._url(f"/nothome/recents/played?limit={limit}"))

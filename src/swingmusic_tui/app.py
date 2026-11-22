@@ -8,7 +8,7 @@ from typing import Any
 from textual import events, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, DataTable, Input, Label, ListItem, ListView, Static
 
@@ -236,30 +236,40 @@ class HelpModal(ModalScreen[None]):
         background: rgba(8, 9, 14, 0.78);
     }
     #help-box {
-        width: 64;
+        width: 72;
+        max-width: 94%;
         height: auto;
+        max-height: 90%;
         padding: 1 2;
         background: #161822;
         border: round #5c7cfa;
     }
+    #help-scroll {
+        height: auto;
+        max-height: 100%;
+        background: #161822;
+    }
     #help-text {
         color: #eef0f7;
+    }
+    #help-footer {
+        color: #858ba3;
+        margin-top: 1;
     }
     """
 
     HELP_BODY = (
         "[b #8c52ff]♫  Swing Music TUI — Keybindings[/]\n\n"
-        "[b]Navigation (HJKL)[/]\n"
+        "[b]Navigation[/]\n"
         "  j / k         Move cursor down / up\n"
         "  g / G         Jump to top / bottom\n"
         "  h / l         Focus sidebar / Open item (or go back)\n"
-        "  Tab           Toggle focus between Sidebar and Track list\n"
+        "  Tab           Toggle Sidebar ↔ Track list\n"
         "  Enter         Open album/artist/playlist or Play track\n"
-        "  1 – 6         Jump directly to Home/Favorites/Albums/Artists/Playlists/Queue\n\n"
+        "  1 – 6         Home / Favorites / Albums / Artists / Playlists / Queue\n\n"
         "[b]Sorting & Search[/]\n"
-        "  s             Open Sort Picker (Newest, Oldest, A-Z, Z-A, Artist, Album, Duration)\n"
-        "  S             Flip sort direction (Newest ↔ Oldest, A-Z ↔ Z-A)\n"
-        "  /             Search tracks on server\n\n"
+        "  s / S         Open Sort Picker / Flip sort direction\n"
+        "  /             Search current view (tracks, albums, artists, playlists)\n\n"
         "[b]Playback & Library[/]\n"
         "  Space         Play / Pause\n"
         "  n / p         Next / Previous track\n"
@@ -268,19 +278,26 @@ class HelpModal(ModalScreen[None]):
         "  a             Add selected track to Queue\n"
         "  f             Toggle Favorite (♥)\n"
         "  z / r         Toggle Shuffle / Cycle Repeat (off → all → one)\n"
-        "  L             Server Login / Settings\n"
-        "  q             Quit\n\n"
-        "[dim]Press Esc, q, or ? to close[/]"
+        "  L / q         Server Login / Quit"
     )
 
     def compose(self) -> ComposeResult:
         with Vertical(id="help-box"):
-            yield Static(self.HELP_BODY, id="help-text")
+            with VerticalScroll(id="help-scroll"):
+                yield Static(self.HELP_BODY, id="help-text")
+            yield Static("j/k: Scroll   Esc / q / ?: Close", id="help-footer")
 
     def on_key(self, event: events.Key) -> None:
+        sc = self.query_one("#help-scroll", VerticalScroll)
         if event.key in ("escape", "q", "question_mark", "?"):
             event.stop()
             self.dismiss(None)
+        elif event.key == "j":
+            event.stop()
+            sc.scroll_down(animate=False)
+        elif event.key == "k":
+            event.stop()
+            sc.scroll_up(animate=False)
 
 
 class SwingMusicApp(App):
