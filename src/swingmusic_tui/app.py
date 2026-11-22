@@ -715,7 +715,7 @@ class SwingMusicApp(App):
                 else:
                     rev = sort_mode in ("newest", "title_desc", "duration_desc")
                     sby = "title" if sort_mode.startswith("title") else ("duration" if sort_mode.startswith("duration") else "created_date")
-                    albums = self.api.get_albums(300, sort_by=sby, reverse=rev)
+                    albums = self.api.get_albums(5000, sort_by=sby, reverse=rev)
                     self.call_from_thread(self._render_albums, albums)
             elif view == "artists":
                 if q:
@@ -723,7 +723,7 @@ class SwingMusicApp(App):
                     self.call_from_thread(self._render_artists, artists, f"Artists • Search: \"{q}\" ({len(artists)})")
                 else:
                     rev = sort_mode in ("newest", "title_desc")
-                    artists = self.api.get_artists(300, sort_by="name", reverse=rev)
+                    artists = self.api.get_artists(5000, sort_by="name", reverse=rev)
                     self.call_from_thread(self._render_artists, artists)
             elif view == "playlists":
                 playlists = self.api.get_playlists()

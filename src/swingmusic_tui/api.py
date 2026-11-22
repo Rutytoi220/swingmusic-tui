@@ -416,19 +416,36 @@ class SwingMusicAPI:
         data = r.json()
         return [Track.from_dict(t) for t in (data.get("results") or [])]
 
-    def search_albums(self, query: str, limit: int = 60) -> list[Album]:
+    def search_albums(self, query: str, limit: int = 200) -> list[Album]:
+        ql = query.strip().lower()
+        all_albums = self.get_albums(limit=5000)
+        tokens = ql.split()
+        matches = [
+            a for a in all_albums
+            if all(tok in a.title.lower() or tok in a.artists.lower() for tok in tokens)
+        ]
+        # Rank exact/prefix title matches first
+        matches.sort(key=lambda a: (0 if a.title.lower().startswith(ql) else (1 if ql in a.title.lower() else 2), a.title.lower()))
+        if matches:
+            return matches[:limit]
+        # Fallback to server fuzzy search if no substring match
         q = quote(query.strip())
         r = self._client.get(self._url(f"/search/?itemtype=albums&start=0&q={q}&limit={limit}"))
         r.raise_for_status()
-        data = r.json()
-        return [Album.from_dict(a) for a in (data.get("results") or [])]
+        return [Album.from_dict(a) for a in (r.json().get("results") or [])]
 
-    def search_artists(self, query: str, limit: int = 60) -> list[Artist]:
+    def search_artists(self, query: str, limit: int = 200) -> list[Artist]:
+        ql = query.strip().lower()
+        all_artists = self.get_artists(limit=5000)
+        tokens = ql.split()
+        matches = [a for a in all_artists if all(tok in a.name.lower() for tok in tokens)]
+        matches.sort(key=lambda a: (0 if a.name.lower().startswith(ql) else 1, a.name.lower()))
+        if matches:
+            return matches[:limit]
         q = quote(query.strip())
         r = self._client.get(self._url(f"/search/?itemtype=artists&start=0&q={q}&limit={limit}"))
         r.raise_for_status()
-        data = r.json()
-        return [Artist.from_dict(a) for a in (data.get("results") or [])]
+        return [Artist.from_dict(a) for a in (r.json().get("results") or [])]
 
     def stream_url(self, track: Track, quality: str = "original", legacy: bool = True) -> str:
         fp = quote(track.filepath, safe="")
