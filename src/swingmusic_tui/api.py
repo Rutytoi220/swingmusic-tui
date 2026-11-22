@@ -9,8 +9,11 @@ from urllib.parse import quote
 import httpx
 
 SORT_MODES: list[tuple[str, str]] = [
+    ("popularity", "Popularity"),
     ("newest", "Newest → Oldest"),
     ("oldest", "Oldest → Newest"),
+    ("release_desc", "Release Date ↓"),
+    ("release_asc", "Release Date ↑"),
     ("title_asc", "Title A → Z"),
     ("title_desc", "Title Z → A"),
     ("artist_asc", "Artist A → Z"),
@@ -173,10 +176,26 @@ class FolderResult:
     home: str = ""
 
 
+@dataclass
+class ArtistPage:
+    artist: Artist
+    tracks: list[Track] = field(default_factory=list)
+    albums: list[Album] = field(default_factory=list)
+    singles: list[Album] = field(default_factory=list)
+    duration: int = 0
+    genres: list[str] = field(default_factory=list)
+    image: str = ""
+    image_bytes: bytes = b""
+
+
 def sort_tracks(tracks: list[Track], mode: str) -> list[Track]:
-    """Client-side sorting supporting oldest/newest, A-Z, Z-A, artist, album, duration."""
-    if mode == "default":
+    """Client-side sorting supporting popularity, release date, oldest/newest, A-Z, Z-A, artist, album, duration."""
+    if mode in ("default", "popularity"):
         return list(tracks)
+    if mode == "release_desc":
+        return sorted(tracks, key=lambda t: (t.date or int(t.last_mod), t.title.lower()), reverse=True)
+    if mode == "release_asc":
+        return sorted(tracks, key=lambda t: (t.date or int(t.last_mod) or 9999999999, t.title.lower()))
     has_timestamps = any(t.last_mod or t.date for t in tracks)
     if mode == "newest":
         if not has_timestamps:
@@ -409,6 +428,58 @@ class SwingMusicAPI:
         r.raise_for_status()
         data = r.json()
         return [Track.from_dict(t) for t in (data.get("tracks") or [])]
+
+    def get_artist_page(self, artisthash: str) -> ArtistPage:
+        r = self._client.get(self._url(f"/artist/{artisthash}?tracklimit=500&albumlimit=100"))
+        r.raise_for_status()
+        data = r.json()
+        art_raw = data.get("artist") or {}
+        artist = Artist.from_dict(art_raw)
+        if not artist.artisthash:
+            artist.artisthash = artisthash
+
+        alb_dict = data.get("albums") if isinstance(data.get("albums"), dict) else {}
+        albums = [Album.from_dict(a) for a in (alb_dict.get("albums") or [])]
+        albums.extend(Album.from_dict(a) for a in (alb_dict.get("compilations") or []))
+        singles = [Album.from_dict(a) for a in (alb_dict.get("singles_and_eps") or [])]
+        singles.extend(Album.from_dict(a) for a in (alb_dict.get("appearances") or []))
+
+        albums.sort(key=lambda a: (a.date, a.title.lower()), reverse=True)
+        singles.sort(key=lambda a: (a.date, a.title.lower()), reverse=True)
+
+        album_date_map = {a.albumhash: a.date for a in (*albums, *singles) if a.albumhash and a.date}
+        tracks = [Track.from_dict(t) for t in (data.get("tracks") or [])]
+        for t in tracks:
+            if not t.date and t.albumhash in album_date_map:
+                t.date = album_date_map[t.albumhash]
+
+        genres = [
+            g.get("name", "") if isinstance(g, dict) else str(g)
+            for g in (art_raw.get("genres") or [])
+        ]
+        genres = [g for g in genres if g][:5]
+        image = str(art_raw.get("image") or f"{artisthash}.webp")
+        image_bytes = b""
+        if image:
+            for ep in (f"/img/artist/small/{image}", f"/img/artist/{image}"):
+                try:
+                    ri = self._client.get(self._url(ep))
+                    if ri.status_code == 200 and ri.content:
+                        image_bytes = ri.content
+                        break
+                except Exception:
+                    pass
+
+        return ArtistPage(
+            artist=artist,
+            tracks=tracks,
+            albums=albums,
+            singles=singles,
+            duration=int(art_raw.get("duration") or 0),
+            genres=genres,
+            image=image,
+            image_bytes=image_bytes,
+        )
 
     def search_tracks(self, query: str, limit: int = 60) -> list[Track]:
         q = quote(query.strip())

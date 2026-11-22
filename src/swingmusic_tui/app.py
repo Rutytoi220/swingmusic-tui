@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import datetime
+import io
 import os
 from typing import Any
 
+from rich.text import Text
 from textual import events, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -17,6 +20,7 @@ from .api import (
     SORT_MODES,
     Album,
     Artist,
+    ArtistPage,
     Folder,
     Playlist,
     SwingMusicAPI,
@@ -35,6 +39,55 @@ def fmt_time(seconds: float | int) -> str:
     if h > 0:
         return f"{h}:{m:02d}:{sec:02d}"
     return f"{m:02d}:{sec:02d}"
+
+
+def fmt_year(ts: int) -> str:
+    if not ts or ts <= 0:
+        return ""
+    if 1000 <= ts <= 2999:
+        return str(ts)
+    try:
+        return str(datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc).year)
+    except Exception:
+        return ""
+
+
+def fmt_total_duration(seconds: int) -> str:
+    s = max(0, int(seconds))
+    m = s // 60
+    h, m = divmod(m, 60)
+    if h > 0:
+        return f"{h}h {m:02d}m"
+    return f"{m}m"
+
+
+def render_cover_art(img_bytes: bytes, cols: int = 16, rows: int = 8) -> Text:
+    """Render an image as crisp truecolor half-block pixels (works in any terminal)."""
+    if not img_bytes:
+        return Text("")
+    try:
+        from PIL import Image
+
+        im = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+        # Center-crop to square so portrait/landscape artist photos don't stretch
+        w, h = im.size
+        side = min(w, h)
+        left = (w - side) // 2
+        top = (h - side) // 2
+        im = im.crop((left, top, left + side, top + side))
+        im = im.resize((cols, rows * 2), Image.Resampling.LANCZOS)
+        px = im.load()
+        out = Text()
+        for y in range(0, rows * 2, 2):
+            for x in range(cols):
+                r1, g1, b1 = px[x, y]
+                r2, g2, b2 = px[x, y + 1]
+                out.append("▀", style=f"rgb({r1},{g1},{b1}) on rgb({r2},{g2},{b2})")
+            if y + 2 < rows * 2:
+                out.append("\n")
+        return out
+    except Exception:
+        return Text("")
 
 
 def make_progress_bar(pos: float, dur: float, width: int = 28) -> str:
@@ -269,6 +322,7 @@ class HelpModal(ModalScreen[None]):
         "  1 – 6         Home / Favorites / Albums / Artists / Playlists / Queue\n\n"
         "[b]Sorting & Search[/]\n"
         "  s / S         Open Sort Picker / Flip sort direction\n"
+        "  v / V         Switch Artist tabs (Songs / Albums / Singles)\n"
         "  /             Search current view (tracks, albums, artists, playlists)\n\n"
         "[b]Playback & Library[/]\n"
         "  Space         Play / Pause\n"
@@ -397,6 +451,75 @@ class SwingMusicApp(App):
         display: block;
     }
 
+    #artist-header {
+        display: none;
+        height: 10;
+        padding: 1 2 0 2;
+        background: transparent;
+        border-bottom: solid #2a2d3d;
+    }
+
+    #artist-header.visible {
+        display: block;
+    }
+
+    #artist-header-row {
+        height: 8;
+        background: transparent;
+    }
+
+    #artist-cover {
+        width: 18;
+        height: 8;
+        padding: 0 2 0 0;
+        background: transparent;
+    }
+
+    #artist-meta {
+        width: 1fr;
+        height: 8;
+        background: transparent;
+    }
+
+    #artist-name {
+        color: #ffffff;
+        text-style: bold;
+        height: 1;
+        margin-top: 1;
+        background: transparent;
+    }
+
+    #artist-stats {
+        color: #9aa0b8;
+        height: 1;
+        margin-top: 1;
+        background: transparent;
+    }
+
+    #artist-tabs {
+        height: 3;
+        margin-top: 1;
+        background: transparent;
+    }
+
+    .artist-tab {
+        width: auto;
+        height: 3;
+        padding: 0 2;
+        margin-right: 1;
+        color: #9aa0b8;
+        border: round #2a2d3d;
+        background: transparent;
+        content-align: center middle;
+    }
+
+    .artist-tab.--active {
+        color: #ffffff;
+        text-style: bold;
+        border: round #5c7cfa;
+        background: #252942;
+    }
+
     #content-table {
         height: 1fr;
         background: transparent;
@@ -466,6 +589,8 @@ class SwingMusicApp(App):
         Binding("question_mark", "show_help", "Help", show=False),
         Binding("s", "open_sort", "Sort", show=False),
         Binding("S", "flip_sort", "Reverse Sort", show=False),
+        Binding("v", "next_artist_tab", "Next Tab", show=False),
+        Binding("V", "prev_artist_tab", "Prev Tab", show=False),
         Binding("slash", "open_search", "Search", show=False),
         Binding("space", "toggle_pause", "Play/Pause", show=False),
         Binding("n", "next_track", "Next", show=False),
@@ -510,6 +635,9 @@ class SwingMusicApp(App):
         self.rows_meta: list[tuple[str, Any]] = []  # ("folder"|"track"|"album"|"artist"|"playlist"|"parent", obj)
         self.current_tracks: list[Track] = []
         self.last_search_query: str = ""
+        self.artist_tab: str = "songs"
+        self.artist_sort_mode: str = "popularity"
+        self.artist_cache: dict[str, ArtistPage] = {}
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="body"):
@@ -524,6 +652,16 @@ class SwingMusicApp(App):
                     yield Static("♥ Favorites", id="view-title")
                     yield Static(f"⇅ {SORT_LABELS.get(self.cfg.sort_mode, 'Newest → Oldest')}  [s]", id="sort-badge")
                 yield Input(placeholder="Search tracks on Swing Music... (Enter to search, Esc to cancel)", id="search-bar")
+                with Container(id="artist-header"):
+                    with Horizontal(id="artist-header-row"):
+                        yield Static("", id="artist-cover")
+                        with Vertical(id="artist-meta"):
+                            yield Static("", id="artist-name")
+                            yield Static("", id="artist-stats")
+                            with Horizontal(id="artist-tabs"):
+                                yield Static("Songs", id="atab-songs", classes="artist-tab --active")
+                                yield Static("Albums", id="atab-albums", classes="artist-tab")
+                                yield Static("Singles & EPs", id="atab-singles", classes="artist-tab")
                 yield DataTable(id="content-table", cursor_type="row")
                 yield Static("j/k: Move   h/l: Back/Open   s: Sort   /: Search   Space: Play/Pause   ?: Help", id="status-line")
         with Horizontal(id="player-bar"):
@@ -621,9 +759,14 @@ class SwingMusicApp(App):
     def _set_status(self, msg: str) -> None:
         self.query_one("#status-line", Static).update(msg)
 
+    def _in_artist_view(self) -> bool:
+        return bool(self.subview_stack and self.subview_stack[-1][0] == "artist")
+
     def _update_sort_badge(self) -> None:
         if self.subview_stack and self.subview_stack[-1][0] == "album" and self.cfg.sort_mode in ("newest", "oldest", "default"):
             label = "Track Order"
+        elif self._in_artist_view():
+            label = SORT_LABELS.get(self.artist_sort_mode, self.artist_sort_mode)
         else:
             label = SORT_LABELS.get(self.cfg.sort_mode, self.cfg.sort_mode)
         self.query_one("#sort-badge", Static).update(f"⇅ {label}  [s]")
@@ -675,9 +818,17 @@ class SwingMusicApp(App):
 
     def _load_current_view(self) -> None:
         self._update_sort_badge()
+        if not self._in_artist_view():
+            self.query_one("#artist-header", Container).remove_class("visible")
         if self.current_view == "queue":
             self._render_queue()
             return
+        if self._in_artist_view():
+            ahash = self.subview_stack[-1][1]
+            cached = self.artist_cache.get(ahash)
+            if cached is not None:
+                self._render_artist_page(cached)
+                return
         self._fetch_view_worker(self.current_view, self.current_folder_path, list(self.subview_stack), self.cfg.sort_mode)
 
     @work(thread=True, exclusive=True)
@@ -694,15 +845,17 @@ class SwingMusicApp(App):
         try:
             if subview_stack:
                 kind, key = subview_stack[-1]
+                if kind == "artist":
+                    page = self.api.get_artist_page(key)
+                    self.artist_cache[key] = page
+                    self.call_from_thread(self._render_artist_page, page)
+                    return
                 if kind == "album":
                     tracks = self.api.get_album_tracks(key)
                     if sort_mode not in ("newest", "oldest", "default"):
                         tracks = sort_tracks(tracks, sort_mode)
                     album_name = tracks[0].album if tracks and tracks[0].album else ""
                     label = f"Album • {album_name}" if album_name else "Album"
-                elif kind == "artist":
-                    tracks = sort_tracks(self.api.get_artist_tracks(key), sort_mode)
-                    label = "Artist"
                 else:
                     tracks = sort_tracks(self.api.get_playlist_tracks(key), sort_mode)
                     label = "Playlist"
@@ -802,6 +955,114 @@ class SwingMusicApp(App):
             self.rows_meta.append(("track", t))
         self._set_status(f"{len(tracks)} tracks  •  Enter/l: Play  a: Queue  f: Favorite  s: Sort  /: Search")
 
+    def _sort_albums_list(self, albums: list[Album], mode: str) -> list[Album]:
+        if mode in ("oldest", "release_asc"):
+            return sorted(albums, key=lambda a: (a.date or 9999999999, a.title.lower()))
+        if mode == "title_asc":
+            return sorted(albums, key=lambda a: a.title.lower())
+        if mode == "title_desc":
+            return sorted(albums, key=lambda a: a.title.lower(), reverse=True)
+        if mode == "duration_asc":
+            return sorted(albums, key=lambda a: a.duration)
+        if mode == "duration_desc":
+            return sorted(albums, key=lambda a: a.duration, reverse=True)
+        # popularity / newest / release_desc / default -> newest release first
+        return sorted(albums, key=lambda a: (a.date, a.title.lower()), reverse=True)
+
+    def _render_artist_page(self, page: ArtistPage) -> None:
+        header = self.query_one("#artist-header", Container)
+        header.add_class("visible")
+
+        cover = self.query_one("#artist-cover", Static)
+        art_text = render_cover_art(page.image_bytes, cols=16, rows=8)
+        cover.update(art_text if art_text.plain else Text("\n\n   ♪\n", style="bold #8c52ff"))
+
+        self.query_one("#artist-name", Static).update(page.artist.name)
+        parts = [f"{len(page.tracks)} songs"]
+        if page.albums:
+            parts.append(f"{len(page.albums)} albums")
+        if page.singles:
+            parts.append(f"{len(page.singles)} singles")
+        if page.duration:
+            parts.append(fmt_total_duration(page.duration))
+        if page.genres:
+            parts.append(", ".join(page.genres))
+        self.query_one("#artist-stats", Static).update("  •  ".join(parts))
+
+        tab_defs = [
+            ("songs", f"Songs ({len(page.tracks)})"),
+            ("albums", f"Albums ({len(page.albums)})"),
+            ("singles", f"Singles & EPs ({len(page.singles)})"),
+        ]
+        for key, label in tab_defs:
+            w = self.query_one(f"#atab-{key}", Static)
+            w.update(label)
+            if self.artist_tab == key:
+                w.add_class("--active")
+            else:
+                w.remove_class("--active")
+
+        q = self.last_search_query.strip()
+        ql = q.lower()
+        self._update_sort_badge()
+
+        if self.artist_tab == "songs":
+            tracks = sort_tracks(page.tracks, self.artist_sort_mode)
+            if ql:
+                tracks = [t for t in tracks if ql in t.title.lower() or ql in t.album.lower() or ql in t.artists.lower()]
+            title = f"Artist • {page.artist.name} • Filter: \"{q}\" ({len(tracks)})" if ql else f"Artist • {page.artist.name}"
+            self.query_one("#view-title", Static).update(title)
+            table = self._reset_table(["#", "Title", "Album", "Year", "Time", "♥"])
+            table.add_row("..", "↰  .. (Back)", "", "", "", "")
+            self.rows_meta.append(("parent", None))
+            self.current_tracks = list(tracks)
+            for i, t in enumerate(tracks, start=1):
+                fav = "♥" if t.is_favorite else ""
+                table.add_row(str(i), t.title, t.album, fmt_year(t.date), fmt_time(t.duration), fav)
+                self.rows_meta.append(("track", t))
+            self._set_status(f"{len(tracks)} songs  •  v: Switch tab  s: Sort  Enter/l: Play  a: Queue  f: Fav  /: Filter")
+        else:
+            is_singles = self.artist_tab == "singles"
+            src = page.singles if is_singles else page.albums
+            items = self._sort_albums_list(src, self.artist_sort_mode)
+            if ql:
+                items = [a for a in items if ql in a.title.lower()]
+            kind_lbl = "Singles & EPs" if is_singles else "Albums"
+            title = f"Artist • {page.artist.name} • {kind_lbl}" + (f" • Filter: \"{q}\"" if ql else "")
+            self.query_one("#view-title", Static).update(title)
+            table = self._reset_table(["#", "Single / EP" if is_singles else "Album", "Year", "Tracks", "Duration"])
+            table.add_row("..", "↰  .. (Back)", "", "", "")
+            self.rows_meta.append(("parent", None))
+            for i, a in enumerate(items, start=1):
+                table.add_row(str(i), a.title, fmt_year(a.date), str(a.trackcount), fmt_time(a.duration))
+                self.rows_meta.append(("album", a))
+            self._set_status(f"{len(items)} {kind_lbl.lower()}  •  v: Switch tab  s: Sort  Enter/l: Open  /: Filter")
+
+    def on_click(self, event: events.Click) -> None:
+        widget = event.widget
+        if widget and widget.id and widget.id.startswith("atab-") and self._in_artist_view():
+            tab = widget.id[5:]
+            if tab in ("songs", "albums", "singles") and tab != self.artist_tab:
+                self.artist_tab = tab
+                self.last_search_query = ""
+                self._load_current_view()
+
+    def action_next_artist_tab(self) -> None:
+        if not self._in_artist_view():
+            return
+        tabs = ["songs", "albums", "singles"]
+        self.artist_tab = tabs[(tabs.index(self.artist_tab) + 1) % len(tabs)]
+        self.last_search_query = ""
+        self._load_current_view()
+
+    def action_prev_artist_tab(self) -> None:
+        if not self._in_artist_view():
+            return
+        tabs = ["songs", "albums", "singles"]
+        self.artist_tab = tabs[(tabs.index(self.artist_tab) - 1) % len(tabs)]
+        self.last_search_query = ""
+        self._load_current_view()
+
     def _render_albums(self, albums: list[Album], title: str | None = None) -> None:
         self.query_one("#view-title", Static).update(title or f"Albums ({len(albums)})")
         table = self._reset_table(["#", "Album", "Artist", "Tracks", "Duration"])
@@ -863,6 +1124,8 @@ class SwingMusicApp(App):
             self._load_current_view()
         elif kind == "artist" and isinstance(obj, Artist):
             self.last_search_query = ""
+            self.artist_tab = "songs"
+            self.artist_sort_mode = "popularity"
             self.subview_stack.append(("artist", obj.artisthash))
             self._load_current_view()
         elif kind == "playlist" and isinstance(obj, Playlist):
@@ -948,10 +1211,19 @@ class SwingMusicApp(App):
                     nav.focus()
 
     def action_open_sort(self) -> None:
-        self.push_screen(SortModal(self.cfg.sort_mode), self._apply_sort_mode)
+        cur = self.artist_sort_mode if self._in_artist_view() else self.cfg.sort_mode
+        self.push_screen(SortModal(cur), self._apply_sort_mode)
 
     def _apply_sort_mode(self, mode: str | None) -> None:
-        if not mode or mode == self.cfg.sort_mode:
+        if not mode:
+            return
+        if self._in_artist_view():
+            if mode == self.artist_sort_mode:
+                return
+            self.artist_sort_mode = mode
+            self._load_current_view()
+            return
+        if mode == self.cfg.sort_mode:
             return
         self.cfg.sort_mode = mode
         self.cfg.save()
@@ -959,6 +1231,9 @@ class SwingMusicApp(App):
 
     def action_flip_sort(self) -> None:
         flips = {
+            "popularity": "release_desc",
+            "release_desc": "release_asc",
+            "release_asc": "release_desc",
             "newest": "oldest",
             "oldest": "newest",
             "title_asc": "title_desc",
@@ -966,7 +1241,8 @@ class SwingMusicApp(App):
             "duration_asc": "duration_desc",
             "duration_desc": "duration_asc",
         }
-        self._apply_sort_mode(flips.get(self.cfg.sort_mode, "newest"))
+        cur = self.artist_sort_mode if self._in_artist_view() else self.cfg.sort_mode
+        self._apply_sort_mode(flips.get(cur, "newest"))
 
     def action_open_search(self) -> None:
         search_bar = self.query_one("#search-bar", Input)
