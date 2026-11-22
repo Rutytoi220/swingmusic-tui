@@ -605,7 +605,10 @@ class SwingMusicApp(App):
         self.query_one("#status-line", Static).update(msg)
 
     def _update_sort_badge(self) -> None:
-        label = SORT_LABELS.get(self.cfg.sort_mode, self.cfg.sort_mode)
+        if self.subview_stack and self.subview_stack[-1][0] == "album" and self.cfg.sort_mode in ("newest", "oldest", "default"):
+            label = "Track Order"
+        else:
+            label = SORT_LABELS.get(self.cfg.sort_mode, self.cfg.sort_mode)
         self.query_one("#sort-badge", Static).update(f"⇅ {label}  [s]")
 
     def _select_nav(self, view_key: str) -> None:
@@ -675,8 +678,11 @@ class SwingMusicApp(App):
             if subview_stack:
                 kind, key = subview_stack[-1]
                 if kind == "album":
-                    tracks = sort_tracks(self.api.get_album_tracks(key), sort_mode)
-                    label = "Album"
+                    tracks = self.api.get_album_tracks(key)
+                    if sort_mode not in ("newest", "oldest", "default"):
+                        tracks = sort_tracks(tracks, sort_mode)
+                    album_name = tracks[0].album if tracks and tracks[0].album else ""
+                    label = f"Album • {album_name}" if album_name else "Album"
                 elif kind == "artist":
                     tracks = sort_tracks(self.api.get_artist_tracks(key), sort_mode)
                     label = "Artist"

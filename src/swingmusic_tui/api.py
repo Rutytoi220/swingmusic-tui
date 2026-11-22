@@ -393,7 +393,8 @@ class SwingMusicAPI:
         r = self._client.post(self._url("/album"), json={"albumhash": albumhash, "albumlimit": 0})
         r.raise_for_status()
         data = r.json()
-        return [Track.from_dict(t) for t in (data.get("tracks") or [])]
+        tracks = [Track.from_dict(t) for t in (data.get("tracks") or [])]
+        return sorted(tracks, key=lambda t: (t.disc, t.track_num, t.title.lower()))
 
     def get_artists(self, limit: int = 300, sort_by: str = "name", reverse: bool = False) -> list[Artist]:
         r = self._client.get(
