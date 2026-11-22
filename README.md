@@ -39,6 +39,8 @@ First time you open it, just put in your Swing Music URL, username, and password
 - `-` / `+` — volume
 - `z` / `r` — shuffle / repeat
 - `a` / `f` — add to queue / favorite
+- `A` / `R` — go to album / go to artist
+- `v` — switch artist tabs (Songs / Albums / Singles)
 - `?` — help, `q` — quit
 
 ## License

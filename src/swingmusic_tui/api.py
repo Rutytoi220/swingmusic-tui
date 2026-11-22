@@ -32,6 +32,7 @@ class Track:
     title: str
     filepath: str
     artists: str = "Unknown Artist"
+    artisthash: str = ""
     album: str = ""
     albumhash: str = ""
     duration: int = 0
@@ -46,14 +47,23 @@ class Track:
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Track":
         raw_artists = d.get("artists") or d.get("albumartists") or []
+        artisthash = ""
         if isinstance(raw_artists, list):
             artist_names = [
                 a.get("name", "") if isinstance(a, dict) else str(a)
                 for a in raw_artists
             ]
             artist_str = ", ".join(n for n in artist_names if n) or "Unknown Artist"
+            for a in raw_artists:
+                if isinstance(a, dict) and a.get("artisthash"):
+                    artisthash = str(a["artisthash"])
+                    break
         else:
             artist_str = str(raw_artists) or "Unknown Artist"
+        if not artisthash:
+            ah_list = d.get("artisthashes") or []
+            if isinstance(ah_list, list) and ah_list:
+                artisthash = str(ah_list[0])
 
         last_mod = d.get("last_mod") or d.get("lastmodified") or d.get("date") or 0
         try:
@@ -76,6 +86,7 @@ class Track:
             title=str(d.get("title") or d.get("og_title") or "Untitled"),
             filepath=str(d.get("filepath") or ""),
             artists=artist_str,
+            artisthash=artisthash,
             album=str(d.get("album") or d.get("og_album") or ""),
             albumhash=str(d.get("albumhash") or ""),
             duration=dur_i,
@@ -422,6 +433,19 @@ class SwingMusicAPI:
         r.raise_for_status()
         data = r.json()
         return [Artist.from_dict(a) for a in (data.get("items") or [])]
+
+    def get_track_cover_bytes(self, track: Track) -> bytes:
+        img = track.image or (f"{track.albumhash}.webp" if track.albumhash else "")
+        if not img:
+            return b""
+        for ep in (f"/img/thumbnail/medium/{img}", f"/img/thumbnail/small/{img}", f"/img/thumbnail/{img}"):
+            try:
+                r = self._client.get(self._url(ep))
+                if r.status_code == 200 and r.content:
+                    return r.content
+            except Exception:
+                pass
+        return b""
 
     def get_artist_tracks(self, artisthash: str) -> list[Track]:
         r = self._client.get(self._url(f"/artist/{artisthash}?tracklimit=200&albumlimit=0"))

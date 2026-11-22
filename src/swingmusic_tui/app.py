@@ -331,6 +331,7 @@ class HelpModal(ModalScreen[None]):
         "  - / +         Volume -5% / +5%\n"
         "  a             Add selected track to Queue\n"
         "  f             Toggle Favorite (♥)\n"
+        "  A / R         Go to Album / Go to Artist (selected or playing track)\n"
         "  z / r         Toggle Shuffle / Cycle Repeat (off → all → one)\n"
         "  L / q         Server Login / Quit"
     )
@@ -520,7 +521,83 @@ class SwingMusicApp(App):
         background: #252942;
     }
 
+    #content-split {
+        height: 1fr;
+        background: transparent;
+    }
+
+    #queue-now-playing {
+        display: none;
+        width: 44;
+        height: 1fr;
+        padding: 1 2;
+        border-right: solid #2a2d3d;
+        background: transparent;
+        align: center middle;
+    }
+
+    #queue-now-playing.visible {
+        display: block;
+    }
+
+    #qnp-cover {
+        width: 100%;
+        height: auto;
+        content-align: center middle;
+        margin-top: 1;
+        background: transparent;
+    }
+
+    #qnp-title {
+        width: 100%;
+        height: auto;
+        content-align: center middle;
+        text-align: center;
+        color: #ffffff;
+        text-style: bold;
+        margin-top: 1;
+        background: transparent;
+    }
+
+    #qnp-artist {
+        width: 100%;
+        height: auto;
+        content-align: center middle;
+        text-align: center;
+        color: #b197fc;
+        background: transparent;
+    }
+
+    #qnp-album {
+        width: 100%;
+        height: auto;
+        content-align: center middle;
+        text-align: center;
+        color: #7c829d;
+        background: transparent;
+    }
+
+    #qnp-progress {
+        width: 100%;
+        height: auto;
+        content-align: center middle;
+        text-align: center;
+        margin-top: 1;
+        background: transparent;
+    }
+
+    #qnp-actions {
+        width: 100%;
+        height: auto;
+        content-align: center middle;
+        text-align: center;
+        color: #6c7390;
+        margin-top: 1;
+        background: transparent;
+    }
+
     #content-table {
+        width: 1fr;
         height: 1fr;
         background: transparent;
         border: none;
@@ -603,6 +680,8 @@ class SwingMusicApp(App):
         Binding("z", "toggle_shuffle", "Shuffle", show=False),
         Binding("r", "cycle_repeat", "Repeat", show=False),
         Binding("a", "enqueue_selected", "Queue", show=False),
+        Binding("A", "go_to_album", "Go to Album", show=False),
+        Binding("R", "go_to_artist", "Go to Artist", show=False),
         Binding("f", "favorite_selected", "Favorite", show=False),
         Binding("L", "open_login", "Login", show=False),
         Binding("1", "nav_1", "Home", show=False),
@@ -638,6 +717,8 @@ class SwingMusicApp(App):
         self.artist_tab: str = "songs"
         self.artist_sort_mode: str = "popularity"
         self.artist_cache: dict[str, ArtistPage] = {}
+        self.cover_cache: dict[str, bytes] = {}
+        self._qnp_cover_key: str = ""
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="body"):
@@ -662,7 +743,15 @@ class SwingMusicApp(App):
                                 yield Static("Songs", id="atab-songs", classes="artist-tab --active")
                                 yield Static("Albums", id="atab-albums", classes="artist-tab")
                                 yield Static("Singles & EPs", id="atab-singles", classes="artist-tab")
-                yield DataTable(id="content-table", cursor_type="row")
+                with Horizontal(id="content-split"):
+                    with Vertical(id="queue-now-playing"):
+                        yield Static("", id="qnp-cover")
+                        yield Static("[dim]Nothing playing[/]", id="qnp-title")
+                        yield Static("", id="qnp-artist")
+                        yield Static("", id="qnp-album")
+                        yield Static("", id="qnp-progress")
+                        yield Static("Space: Play/Pause  n/p: Skip\nA: Album   R: Artist   f: Fav", id="qnp-actions")
+                    yield DataTable(id="content-table", cursor_type="row")
                 yield Static("j/k: Move   h/l: Back/Open   s: Sort   /: Search   Space: Play/Pause   ?: Help", id="status-line")
         with Horizontal(id="player-bar"):
             yield Static("[dim]Nothing playing[/]", id="now-playing-left")
@@ -714,6 +803,57 @@ class SwingMusicApp(App):
         rpt_map = {"off": "[dim]rpt[/]", "all": "[#8c52ff]RPT[/]", "one": "[#51cf66]RPT1[/]"}
         rpt = rpt_map.get(self.player.repeat, "[dim]rpt[/]")
         right.update(f"{shf} {rpt}  🔊 {self.player.volume:>3}%\n[dim]{self.player.backend_name} • Q:{len(self.player.queue)}[/]")
+
+        if self.current_view == "queue" and not self.subview_stack:
+            self._update_queue_now_playing()
+
+    def _update_queue_now_playing(self) -> None:
+        t = self.player.current_track
+        cover_w = self.query_one("#qnp-cover", Static)
+        title_w = self.query_one("#qnp-title", Static)
+        artist_w = self.query_one("#qnp-artist", Static)
+        album_w = self.query_one("#qnp-album", Static)
+        prog_w = self.query_one("#qnp-progress", Static)
+
+        if t is None:
+            if self._qnp_cover_key != "__none__":
+                self._qnp_cover_key = "__none__"
+                cover_w.update(Text("\n\n\n       ♪\n\n\n", style="bold #5c7cfa"))
+            title_w.update("[dim]Nothing playing[/]")
+            artist_w.update("")
+            album_w.update("")
+            prog_w.update(f"[dim]00:00  {'─' * 20}  00:00[/]")
+            return
+
+        fav = " [#ff6b81]♥[/]" if t.is_favorite else ""
+        icon = "[#51cf66]▶[/]" if self.player.is_playing else "[#fcc419]⏸[/]"
+        title_w.update(f"{icon}  [b]{t.title}[/]{fav}")
+        artist_w.update(t.artists)
+        album_w.update(t.album)
+        bar = make_progress_bar(self.player.position, self.player.duration, width=22)
+        prog_w.update(f"[b]{fmt_time(self.player.position)}[/]  [#5c7cfa]{bar}[/]  [dim]{fmt_time(self.player.duration)}[/]")
+
+        ckey = t.image or t.albumhash or t.trackhash
+        if ckey != self._qnp_cover_key:
+            self._qnp_cover_key = ckey
+            cached = self.cover_cache.get(ckey)
+            if cached is not None:
+                art = render_cover_art(cached, cols=32, rows=16)
+                cover_w.update(art if art.plain else Text("\n\n\n       ♪\n\n\n", style="bold #5c7cfa"))
+            else:
+                cover_w.update(Text("\n\n\n     Loading…\n\n\n", style="dim"))
+                self._fetch_qnp_cover(t, ckey)
+
+    @work(thread=True)
+    def _fetch_qnp_cover(self, track: Track, ckey: str) -> None:
+        raw = self.api.get_track_cover_bytes(track)
+        self.cover_cache[ckey] = raw
+        if self._qnp_cover_key == ckey:
+            art = render_cover_art(raw, cols=32, rows=16)
+            self.call_from_thread(
+                self.query_one("#qnp-cover", Static).update,
+                art if art.plain else Text("\n\n\n       ♪\n\n\n", style="bold #5c7cfa"),
+            )
 
     @work(thread=True)
     def _verify_and_load(self) -> None:
@@ -820,9 +960,12 @@ class SwingMusicApp(App):
         self._update_sort_badge()
         if not self._in_artist_view():
             self.query_one("#artist-header", Container).remove_class("visible")
-        if self.current_view == "queue":
+        qnp = self.query_one("#queue-now-playing", Vertical)
+        if self.current_view == "queue" and not self.subview_stack:
+            qnp.add_class("visible")
             self._render_queue()
             return
+        qnp.remove_class("visible")
         if self._in_artist_view():
             ahash = self.subview_stack[-1][1]
             cached = self.artist_cache.get(ahash)
@@ -1090,18 +1233,19 @@ class SwingMusicApp(App):
     def _render_queue(self) -> None:
         q = self.last_search_query.strip()
         ql = q.lower()
-        title = f"Queue • Filter: \"{q}\"" if q else f"Queue ({len(self.player.queue)} tracks)"
+        title = f"Queue • Filter: \"{q}\"" if q else f"Now Playing & Queue ({len(self.player.queue)} tracks)"
         self.query_one("#view-title", Static).update(title)
-        table = self._reset_table(["#", "Title", "Artist", "Album", "Time", "♥"])
+        table = self._reset_table(["#", "Title", "Artist", "Time", "♥"])
         self.current_tracks = list(self.player.queue)
         for i, t in enumerate(self.player.queue, start=1):
             if ql and ql not in t.title.lower() and ql not in t.artists.lower() and ql not in t.album.lower():
                 continue
             marker = "▶" if (i - 1) == self.player.index else str(i)
             fav = "♥" if t.is_favorite else ""
-            table.add_row(marker, t.title, t.artists, t.album, fmt_time(t.duration), fav)
+            table.add_row(marker, t.title, t.artists, fmt_time(t.duration), fav)
             self.rows_meta.append(("track", t))
-        self._set_status(f"{len(self.rows_meta)} tracks in queue  •  Enter/l: Jump to track  /: Filter")
+        self._update_queue_now_playing()
+        self._set_status(f"{len(self.rows_meta)} tracks in queue  •  Enter/l: Play  A: Go to Album  R: Go to Artist  f: Fav  /: Filter")
 
     def _activate_row(self) -> None:
         table = self.query_one("#content-table", DataTable)
@@ -1304,6 +1448,75 @@ class SwingMusicApp(App):
     def action_cycle_repeat(self) -> None:
         self.cfg.repeat = self.player.cycle_repeat()
         self.cfg.save()
+
+    def _target_track(self) -> Track | None:
+        table = self.query_one("#content-table", DataTable)
+        if 0 <= table.cursor_row < len(self.rows_meta):
+            kind, obj = self.rows_meta[table.cursor_row]
+            if kind == "track" and isinstance(obj, Track):
+                return obj
+        return self.player.current_track
+
+    def action_go_to_album(self) -> None:
+        t = self._target_track()
+        if t is None:
+            self._set_status("No track selected or playing")
+            return
+        if t.albumhash:
+            self.last_search_query = ""
+            self.subview_stack.append(("album", t.albumhash))
+            self._load_current_view()
+        elif t.album:
+            self._resolve_and_open_album(t.album)
+        else:
+            self._set_status("No album info for this track")
+
+    @work(thread=True)
+    def _resolve_and_open_album(self, album_name: str) -> None:
+        self.call_from_thread(self._set_status, f"Finding album: {album_name}…")
+        try:
+            albs = self.api.search_albums(album_name, limit=5)
+            if albs:
+                self.last_search_query = ""
+                self.subview_stack.append(("album", albs[0].albumhash))
+                self.call_from_thread(self._load_current_view)
+            else:
+                self.call_from_thread(self._set_status, f"Album not found: {album_name}")
+        except Exception as exc:
+            self.call_from_thread(self._set_status, f"[#ff6b81]Error: {exc}[/]")
+
+    def action_go_to_artist(self) -> None:
+        t = self._target_track()
+        if t is None:
+            self._set_status("No track selected or playing")
+            return
+        if t.artisthash:
+            self.last_search_query = ""
+            self.artist_tab = "songs"
+            self.artist_sort_mode = "popularity"
+            self.subview_stack.append(("artist", t.artisthash))
+            self._load_current_view()
+        elif t.artists:
+            first_artist = t.artists.split(",")[0].strip()
+            self._resolve_and_open_artist(first_artist)
+        else:
+            self._set_status("No artist info for this track")
+
+    @work(thread=True)
+    def _resolve_and_open_artist(self, artist_name: str) -> None:
+        self.call_from_thread(self._set_status, f"Finding artist: {artist_name}…")
+        try:
+            arts = self.api.search_artists(artist_name, limit=5)
+            if arts:
+                self.last_search_query = ""
+                self.artist_tab = "songs"
+                self.artist_sort_mode = "popularity"
+                self.subview_stack.append(("artist", arts[0].artisthash))
+                self.call_from_thread(self._load_current_view)
+            else:
+                self.call_from_thread(self._set_status, f"Artist not found: {artist_name}")
+        except Exception as exc:
+            self.call_from_thread(self._set_status, f"[#ff6b81]Error: {exc}[/]")
 
     def action_enqueue_selected(self) -> None:
         table = self.query_one("#content-table", DataTable)
