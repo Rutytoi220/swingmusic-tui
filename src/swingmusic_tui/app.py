@@ -611,6 +611,10 @@ class SwingMusicApp(App):
     def _select_nav(self, view_key: str) -> None:
         self.current_view = view_key
         self.subview_stack.clear()
+        self.last_search_query = ""
+        sb = self.query_one("#search-bar", Input)
+        sb.remove_class("visible")
+        sb.value = ""
         lv = self.query_one("#nav-list", ListView)
         for idx, (k, _) in enumerate(NAV_ITEMS):
             if k == view_key:
@@ -665,50 +669,69 @@ class SwingMusicApp(App):
         sort_mode: str,
     ) -> None:
         self.call_from_thread(self._set_status, "Loading…")
+        q = self.last_search_query.strip()
+        ql = q.lower()
         try:
             if subview_stack:
                 kind, key = subview_stack[-1]
                 if kind == "album":
                     tracks = sort_tracks(self.api.get_album_tracks(key), sort_mode)
-                    self.call_from_thread(self._render_tracks, f"Album  ({len(tracks)} tracks)", tracks, True)
+                    label = "Album"
                 elif kind == "artist":
                     tracks = sort_tracks(self.api.get_artist_tracks(key), sort_mode)
-                    self.call_from_thread(self._render_tracks, f"Artist  ({len(tracks)} tracks)", tracks, True)
-                elif kind == "playlist":
+                    label = "Artist"
+                else:
                     tracks = sort_tracks(self.api.get_playlist_tracks(key), sort_mode)
-                    self.call_from_thread(self._render_tracks, f"Playlist  ({len(tracks)} tracks)", tracks, True)
+                    label = "Playlist"
+                if ql:
+                    tracks = [t for t in tracks if ql in t.title.lower() or ql in t.artists.lower() or ql in t.album.lower()]
+                    self.call_from_thread(self._render_tracks, f"{label} • Filter: \"{q}\" ({len(tracks)})", tracks, True)
+                else:
+                    self.call_from_thread(self._render_tracks, f"{label}  ({len(tracks)} tracks)", tracks, True)
                 return
 
             if view == "home":
-                tracks = sort_tracks(self.api.get_recently_added(80), sort_mode)
-                self.call_from_thread(self._render_tracks, f"Home • Recently Added ({len(tracks)})", tracks, False)
+                if q:
+                    tracks = sort_tracks(self.api.search_tracks(q), sort_mode)
+                    self.call_from_thread(self._render_tracks, f"Home • Search Tracks: \"{q}\" ({len(tracks)})", tracks, False)
+                else:
+                    tracks = sort_tracks(self.api.get_recently_added(80), sort_mode)
+                    self.call_from_thread(self._render_tracks, f"Home • Recently Added ({len(tracks)})", tracks, False)
             elif view == "folders":
                 res = self.api.get_folder(folder_path, sort_mode=sort_mode)
                 self.current_folder_path = res.path
                 self.call_from_thread(self._render_folder, res)
             elif view == "favorites":
                 tracks = sort_tracks(self.api.get_favorites(500), sort_mode)
-                self.call_from_thread(self._render_tracks, f"♥ Favorites ({len(tracks)})", tracks, False)
+                if ql:
+                    tracks = [t for t in tracks if ql in t.title.lower() or ql in t.artists.lower() or ql in t.album.lower()]
+                    self.call_from_thread(self._render_tracks, f"♥ Favorites • Filter: \"{q}\" ({len(tracks)})", tracks, False)
+                else:
+                    self.call_from_thread(self._render_tracks, f"♥ Favorites ({len(tracks)})", tracks, False)
             elif view == "albums":
-                rev = sort_mode in ("newest", "title_desc", "duration_desc")
-                sby = "title" if sort_mode.startswith("title") else ("duration" if sort_mode.startswith("duration") else "created_date")
-                albums = self.api.get_albums(300, sort_by=sby, reverse=rev)
-                self.call_from_thread(self._render_albums, albums)
+                if q:
+                    albums = self.api.search_albums(q)
+                    self.call_from_thread(self._render_albums, albums, f"Albums • Search: \"{q}\" ({len(albums)})")
+                else:
+                    rev = sort_mode in ("newest", "title_desc", "duration_desc")
+                    sby = "title" if sort_mode.startswith("title") else ("duration" if sort_mode.startswith("duration") else "created_date")
+                    albums = self.api.get_albums(300, sort_by=sby, reverse=rev)
+                    self.call_from_thread(self._render_albums, albums)
             elif view == "artists":
-                rev = sort_mode in ("newest", "title_desc")
-                artists = self.api.get_artists(300, sort_by="name", reverse=rev)
-                self.call_from_thread(self._render_artists, artists)
+                if q:
+                    artists = self.api.search_artists(q)
+                    self.call_from_thread(self._render_artists, artists, f"Artists • Search: \"{q}\" ({len(artists)})")
+                else:
+                    rev = sort_mode in ("newest", "title_desc")
+                    artists = self.api.get_artists(300, sort_by="name", reverse=rev)
+                    self.call_from_thread(self._render_artists, artists)
             elif view == "playlists":
                 playlists = self.api.get_playlists()
-                self.call_from_thread(self._render_playlists, playlists)
-            elif view == "search" and self.last_search_query:
-                tracks = sort_tracks(self.api.search_tracks(self.last_search_query), sort_mode)
-                self.call_from_thread(
-                    self._render_tracks,
-                    f"Search: \"{self.last_search_query}\" ({len(tracks)})",
-                    tracks,
-                    False,
-                )
+                if ql:
+                    playlists = [p for p in playlists if ql in p.name.lower()]
+                    self.call_from_thread(self._render_playlists, playlists, f"Playlists • Filter: \"{q}\" ({len(playlists)})")
+                else:
+                    self.call_from_thread(self._render_playlists, playlists)
         except Exception as exc:
             self.call_from_thread(self._set_status, f"[#ff6b81]Error: {exc}[/]")
 
@@ -756,40 +779,45 @@ class SwingMusicApp(App):
             self.rows_meta.append(("track", t))
         self._set_status(f"{len(tracks)} tracks  •  Enter/l: Play  a: Queue  f: Favorite  s: Sort  /: Search")
 
-    def _render_albums(self, albums: list[Album]) -> None:
-        self.query_one("#view-title", Static).update(f"Albums ({len(albums)})")
+    def _render_albums(self, albums: list[Album], title: str | None = None) -> None:
+        self.query_one("#view-title", Static).update(title or f"Albums ({len(albums)})")
         table = self._reset_table(["#", "Album", "Artist", "Tracks", "Duration"])
         for i, a in enumerate(albums, start=1):
             table.add_row(str(i), a.title, a.artists, str(a.trackcount), fmt_time(a.duration))
             self.rows_meta.append(("album", a))
-        self._set_status(f"{len(albums)} albums  •  Enter/l: Open album  s: Sort")
+        self._set_status(f"{len(albums)} albums  •  Enter/l: Open album  /: Search albums  s: Sort")
 
-    def _render_artists(self, artists: list[Artist]) -> None:
-        self.query_one("#view-title", Static).update(f"Artists ({len(artists)})")
+    def _render_artists(self, artists: list[Artist], title: str | None = None) -> None:
+        self.query_one("#view-title", Static).update(title or f"Artists ({len(artists)})")
         table = self._reset_table(["#", "Artist", "Albums", "Tracks"])
         for i, a in enumerate(artists, start=1):
             table.add_row(str(i), a.name, str(a.albumcount), str(a.trackcount))
             self.rows_meta.append(("artist", a))
-        self._set_status(f"{len(artists)} artists  •  Enter/l: Open artist  s: Sort")
+        self._set_status(f"{len(artists)} artists  •  Enter/l: Open artist  /: Search artists  s: Sort")
 
-    def _render_playlists(self, playlists: list[Playlist]) -> None:
-        self.query_one("#view-title", Static).update(f"Playlists ({len(playlists)})")
+    def _render_playlists(self, playlists: list[Playlist], title: str | None = None) -> None:
+        self.query_one("#view-title", Static).update(title or f"Playlists ({len(playlists)})")
         table = self._reset_table(["#", "Playlist", "Tracks", "Duration"])
         for i, p in enumerate(playlists, start=1):
             table.add_row(str(i), p.name, str(p.count), fmt_time(p.duration))
             self.rows_meta.append(("playlist", p))
-        self._set_status(f"{len(playlists)} playlists  •  Enter/l: Open playlist")
+        self._set_status(f"{len(playlists)} playlists  •  Enter/l: Open playlist  /: Filter playlists")
 
     def _render_queue(self) -> None:
-        self.query_one("#view-title", Static).update(f"Queue ({len(self.player.queue)} tracks)")
+        q = self.last_search_query.strip()
+        ql = q.lower()
+        title = f"Queue • Filter: \"{q}\"" if q else f"Queue ({len(self.player.queue)} tracks)"
+        self.query_one("#view-title", Static).update(title)
         table = self._reset_table(["#", "Title", "Artist", "Album", "Time", "♥"])
         self.current_tracks = list(self.player.queue)
         for i, t in enumerate(self.player.queue, start=1):
+            if ql and ql not in t.title.lower() and ql not in t.artists.lower() and ql not in t.album.lower():
+                continue
             marker = "▶" if (i - 1) == self.player.index else str(i)
             fav = "♥" if t.is_favorite else ""
             table.add_row(marker, t.title, t.artists, t.album, fmt_time(t.duration), fav)
             self.rows_meta.append(("track", t))
-        self._set_status(f"{len(self.player.queue)} tracks in queue  •  Enter/l: Jump to track")
+        self._set_status(f"{len(self.rows_meta)} tracks in queue  •  Enter/l: Jump to track  /: Filter")
 
     def _activate_row(self) -> None:
         table = self.query_one("#content-table", DataTable)
@@ -807,12 +835,15 @@ class SwingMusicApp(App):
             self.current_folder_path = obj.path
             self._load_current_view()
         elif kind == "album" and isinstance(obj, Album):
+            self.last_search_query = ""
             self.subview_stack.append(("album", obj.albumhash))
             self._load_current_view()
         elif kind == "artist" and isinstance(obj, Artist):
+            self.last_search_query = ""
             self.subview_stack.append(("artist", obj.artisthash))
             self._load_current_view()
         elif kind == "playlist" and isinstance(obj, Playlist):
+            self.last_search_query = ""
             self.subview_stack.append(("playlist", obj.id))
             self._load_current_view()
         elif kind == "track" and isinstance(obj, Track):
@@ -851,6 +882,10 @@ class SwingMusicApp(App):
             if event.key == "escape":
                 event.stop()
                 search_bar.remove_class("visible")
+                if self.last_search_query:
+                    self.last_search_query = ""
+                    search_bar.value = ""
+                    self._load_current_view()
                 self.query_one("#content-table", DataTable).focus()
             return
 
@@ -912,6 +947,21 @@ class SwingMusicApp(App):
 
     def action_open_search(self) -> None:
         search_bar = self.query_one("#search-bar", Input)
+        if self.subview_stack:
+            ph = f"Filter {self.subview_stack[-1][0]} tracks… (Enter to apply, Esc to clear)"
+        elif self.current_view == "albums":
+            ph = "Search albums… (Enter to search, Esc to clear)"
+        elif self.current_view == "artists":
+            ph = "Search artists… (Enter to search, Esc to clear)"
+        elif self.current_view == "playlists":
+            ph = "Filter playlists… (Enter to filter, Esc to clear)"
+        elif self.current_view == "favorites":
+            ph = "Filter favorites… (Enter to filter, Esc to clear)"
+        elif self.current_view == "queue":
+            ph = "Filter queue… (Enter to filter, Esc to clear)"
+        else:
+            ph = "Search tracks… (Enter to search, Esc to clear)"
+        search_bar.placeholder = ph
         search_bar.add_class("visible")
         search_bar.focus()
 
@@ -920,11 +970,8 @@ class SwingMusicApp(App):
             q = event.value.strip()
             event.input.remove_class("visible")
             self.query_one("#content-table", DataTable).focus()
-            if q:
-                self.last_search_query = q
-                self.current_view = "search"
-                self.subview_stack.clear()
-                self._load_current_view()
+            self.last_search_query = q
+            self._load_current_view()
 
     def action_toggle_pause(self) -> None:
         self.player.toggle_pause()

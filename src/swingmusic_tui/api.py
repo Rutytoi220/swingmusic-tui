@@ -416,6 +416,20 @@ class SwingMusicAPI:
         data = r.json()
         return [Track.from_dict(t) for t in (data.get("results") or [])]
 
+    def search_albums(self, query: str, limit: int = 60) -> list[Album]:
+        q = quote(query.strip())
+        r = self._client.get(self._url(f"/search/?itemtype=albums&start=0&q={q}&limit={limit}"))
+        r.raise_for_status()
+        data = r.json()
+        return [Album.from_dict(a) for a in (data.get("results") or [])]
+
+    def search_artists(self, query: str, limit: int = 60) -> list[Artist]:
+        q = quote(query.strip())
+        r = self._client.get(self._url(f"/search/?itemtype=artists&start=0&q={q}&limit={limit}"))
+        r.raise_for_status()
+        data = r.json()
+        return [Artist.from_dict(a) for a in (data.get("results") or [])]
+
     def stream_url(self, track: Track, quality: str = "original", legacy: bool = True) -> str:
         fp = quote(track.filepath, safe="")
         if legacy:
